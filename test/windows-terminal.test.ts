@@ -65,14 +65,9 @@ describe("buildWtArgs", () => {
 });
 
 describe("resolveWtLauncher", () => {
-	it("runs wt.exe directly on native Windows", () => {
-		expect(resolveWtLauncher({ platform: "win32", wsl: false })).toEqual({ command: "wt.exe", prefixArgs: [] });
-	});
-
-	it("bounces through cmd.exe under WSL where the wt alias is unavailable", () => {
-		expect(resolveWtLauncher({ platform: "linux", wsl: true })).toEqual({
-			command: "cmd.exe",
-			prefixArgs: ["/c", "wt.exe"],
-		});
+	it("routes through cmd.exe because wt.exe is an unresolvable App Execution Alias", () => {
+		// Bun/ptree can't resolve the wt.exe alias stub, so it must be launched via
+		// cmd.exe, which resolves the alias natively.
+		expect(resolveWtLauncher()).toEqual({ command: "cmd.exe", prefixArgs: ["/d", "/s", "/c", "wt.exe"] });
 	});
 });

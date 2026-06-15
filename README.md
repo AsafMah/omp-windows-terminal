@@ -63,9 +63,10 @@ oh-my-pi's `/fork` emits a `session_switch` event with `reason: "fork"` and the
 the current pane. The commands and tool build the same `wt.exe` invocation with
 `--fork` / `--resume` / a fresh session and a `pane` / `tab` / `window` target.
 
-`wt -w 0` targets the current window; `-w new` opens a new one. Under WSL the
-call bounces through `cmd.exe /c wt.exe` because the `wt` alias isn't on PATH
-there.
+`wt -w 0` targets the current window; `-w new` opens a new one. Every call is
+routed through `cmd.exe /d /s /c wt.exe …`: `wt.exe` is a Windows App Execution
+Alias that Bun/ptree can't resolve on PATH (a direct spawn fails with "Executable
+not found"), and cmd.exe resolves the alias natively.
 
 ## Pairs well with
 

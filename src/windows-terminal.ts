@@ -61,15 +61,19 @@ export interface WtLauncher {
 }
 
 /**
- * Resolve how to invoke `wt.exe` for the host platform.
+ * Resolve how to invoke `wt.exe`.
  *
- * Native Windows runs `wt.exe` directly. Under WSL the `wt` execution alias is
- * not on PATH, so the call bounces through `cmd.exe /c wt.exe` (per the Windows
- * Terminal docs). Callers gate on `WT_SESSION` before reaching here.
+ * `wt.exe` is a Windows App Execution Alias — a 0-byte reparse stub in
+ * `%LOCALAPPDATA%\Microsoft\WindowsApps`. Bun/ptree's PATH resolver returns
+ * `null` for it (and CreateProcess-style spawns reject the stub), so a direct
+ * `pi.exec("wt.exe", …)` fails with "Executable not found in $PATH". `cmd.exe`
+ * resolves the alias natively, so route through `cmd.exe /d /s /c wt.exe …`
+ * (`/d` skips AutoRun, `/s` keeps quote handling predictable, `/c` run-and-exit)
+ * on Windows and under WSL alike. Callers gate on `WT_SESSION` first, so cmd.exe
+ * is always present by the time we get here.
  */
-export function resolveWtLauncher(env: { platform: NodeJS.Platform; wsl: boolean }): WtLauncher {
-	if (env.platform !== "win32" && env.wsl) return { command: "cmd.exe", prefixArgs: ["/c", "wt.exe"] };
-	return { command: "wt.exe", prefixArgs: [] };
+export function resolveWtLauncher(): WtLauncher {
+	return { command: "cmd.exe", prefixArgs: ["/d", "/s", "/c", "wt.exe"] };
 }
 
 /** Executable used to launch the spawned session. Installed users have `omp` on PATH. */
@@ -88,10 +92,7 @@ export default function windowsTerminalExtension(pi: ExtensionAPI) {
 		if (!Bun.env.WT_SESSION) {
 			throw new Error("Not running inside Windows Terminal (WT_SESSION unset); cannot control panes.");
 		}
-		const launcher = resolveWtLauncher({
-			platform: process.platform,
-			wsl: Boolean(Bun.env.WSL_DISTRO_NAME || Bun.env.WSL_INTEROP),
-		});
+		const launcher = resolveWtLauncher();
 		const result = await pi.exec(launcher.command, [...launcher.prefixArgs, ...buildWtArgs(opts)], {
 			cwd: opts.cwd,
 		});
@@ -203,7 +204,11 @@ export default function windowsTerminalExtension(pi: ExtensionAPI) {
 				commandline: [ompBin(), "--resume", event.previousSessionFile],
 			});
 		} catch (err) {
-			pi.logger.debug("wt auto-pane failed", { err: err instanceof Error ? err.message : String(err) });
+			const message = err instanceof Error ? err.message : String(err);
+			pi.logger.debug("wt auto-pane failed", { err: message });
+			// Surface it: a silent debug log left "/fork did nothing" indistinguishable
+			// from success. A warning tells the user why no pane appeared.
+			if (ctx.hasUI) ctx.ui.notify(`Auto-pane on fork failed: ${message}`, "warning");
 		}
 	});
 }
