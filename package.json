@@ -13,7 +13,7 @@
 	"omp": {
 		"extensions": ["./src/windows-terminal.ts"]
 	},
-	"files": ["src", "README.md", "LICENSE"],
+	"files": ["src", "skills", "README.md", "LICENSE"],
 	"scripts": {
 		"test": "bun test",
 		"check": "tsc --noEmit"

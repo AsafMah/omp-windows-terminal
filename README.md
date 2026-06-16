@@ -18,6 +18,7 @@ a tool for opening forks/sessions in panes, tabs, or windows on demand. All via
 | `/wtpane [fork\|current]` | Open this session in an adjacent split pane. |
 | `/wtwindow [fork\|current]` | Open this session in a new window. |
 | `spawn_session_pane` (tool) | LLM-callable: open a `fork` / `resume` / `new` session in a `pane` / `tab` / `window`. |
+| `windows-terminal-control` (skill) | Teaches the agent to drive `wt.exe` for multi-pane layouts — split/tile panes, open tabs/windows, and arrange omp sessions into a grid. Activates on "arrange/split/organize my terminal" or "arrange all my omps". |
 
 `/branch` is **not** hooked on purpose — branching is a lightweight "escape and
 pick a message" navigation, not something that warrants a new pane.
