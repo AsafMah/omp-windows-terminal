@@ -8,7 +8,9 @@ a tool for opening forks/sessions in panes, tabs, or windows on demand. All via
 `wt.exe`; no oh-my-pi core changes.
 
 > Requires [Windows Terminal](https://aka.ms/terminal) (`wt.exe`). Everything is
-> a no-op outside it (gated on the `WT_SESSION` environment variable).
+> a no-op outside it (gated on the `WT_SESSION` environment variable). Works on
+> native Windows and inside WSL (panes are wrapped through `wsl.exe` — see
+> [WSL](#wsl)).
 
 ## What you get
 
@@ -68,6 +70,16 @@ the current pane. The commands and tool build the same `wt.exe` invocation with
 routed through `cmd.exe /d /s /c wt.exe …`: `wt.exe` is a Windows App Execution
 Alias that Bun/ptree can't resolve on PATH (a direct spawn fails with "Executable
 not found"), and cmd.exe resolves the alias natively.
+
+### WSL
+
+Inside WSL, `WT_SESSION` is inherited but `wt.exe` is still a Windows program, so
+a raw POSIX `cwd` and a Linux `omp` command can't be handed to it directly. Under
+WSL the extension translates the `-d` start directory to a Windows path via
+`wslpath -w` and wraps the child in `wsl.exe -d <distro> --cd <cwd> -- omp …`, so
+the pane re-enters the current distro and runs the real Linux `omp` in the right
+directory. If `wslpath` can't map the directory, `-d` is dropped (WT falls back to
+its default) while `wsl.exe --cd` still places the session correctly.
 
 ## Pairs well with
 

@@ -91,7 +91,15 @@ cmd.exe /d /s /c wt.exe -w 0 sp -d C:\proj omp --resume <session>
 - **No reflow of live panes** — open a new layout instead.
 - **Quote paths with spaces**; they pass through cmd.exe to wt.
 - **WSL**: the `wt` alias isn't on PATH there; the `cmd.exe /d /s /c wt.exe` form
-  still works via interop, but `-d` needs a Windows path (`wslpath -w`).
+  still works via interop, but **both** the path and the command need translating.
+  `-d` needs a Windows path (`wslpath -w "$cwd"`), and the child command is a
+  *Windows* process to wt, so a Linux `omp` must be wrapped in `wsl.exe` to run in
+  the distro. Per pane, use:
+  ```
+  cmd.exe /d /s /c wt.exe -w 0 sp -d "$(wslpath -w "$cwd")" wsl.exe -d "$WSL_DISTRO_NAME" --cd "$cwd" -- omp --resume <session>
+  ```
+  (`wsl.exe --cd` accepts the Linux `$cwd` directly. The `spawn_session_pane`
+  tool and the `/fork` auto-pane do this wrapping for you.)
 
 ## Safety
 

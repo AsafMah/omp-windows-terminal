@@ -14,8 +14,10 @@
  * - `spawn_session_pane`       LLM-callable tool: open a fork/resume/new session
  *     in a pane, tab, or window.
  *
- * Requires Windows Terminal (`wt.exe`). All commands and the hook are no-ops
- * outside it (gated on `WT_SESSION`).
+ * Requires Windows Terminal (`wt.exe`); all commands and the hook are no-ops
+ * outside it (gated on `WT_SESSION`). Works on native Windows and under WSL —
+ * WSL launches translate the `-d` start directory to a Windows path and wrap the
+ * child command in `wsl.exe` so the Linux `omp` runs in the right distro/dir.
  */
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 
@@ -28,8 +30,8 @@ export interface WtPaneOptions {
 	target: PaneTarget;
 	/** Split direction for `target: "pane"`. "auto" lets WT pick the longest edge. */
 	split?: SplitDir;
-	/** Starting directory for the new pane (`wt -d`). */
-	cwd: string;
+	/** Starting directory for the new pane (`wt -d`). Omitted from the args when unset — e.g. WSL path translation was unavailable — letting WT use its default. */
+	cwd?: string;
 	/** Child command line, executable first, e.g. ["omp", "--fork", "/path.jsonl"]. */
 	commandline: string[];
 }
@@ -51,7 +53,8 @@ export function buildWtArgs(opts: WtPaneOptions): string[] {
 	} else {
 		args.push("nt");
 	}
-	args.push("-d", opts.cwd, ...opts.commandline);
+	if (opts.cwd) args.push("-d", opts.cwd);
+	args.push(...opts.commandline);
 	return args;
 }
 
@@ -76,6 +79,51 @@ export function resolveWtLauncher(): WtLauncher {
 	return { command: "cmd.exe", prefixArgs: ["/d", "/s", "/c", "wt.exe"] };
 }
 
+/** Translate a POSIX path to its Windows form via `wslpath -w`. Returns undefined when interop is unavailable or the path can't be mapped, so callers omit `-d` rather than feed wt.exe a path it can't use. */
+function wslpathToWindows(posixPath: string): string | undefined {
+	const result = Bun.spawnSync(["wslpath", "-w", posixPath], { stdout: "pipe", stderr: "pipe" });
+	if (result.exitCode !== 0) return undefined;
+	const win = new TextDecoder().decode(result.stdout).trim();
+	return win.length > 0 ? win : undefined;
+}
+
+/**
+ * Wrap a child command so it runs inside the current WSL distro:
+ * `wsl.exe -d <distro> --cd <cwd> -- <command>`. wt.exe launches this as a
+ * Windows process and `wsl.exe` re-enters Linux to run the real `omp` in `cwd`
+ * (a POSIX path, which `--cd` accepts) instead of a Windows `omp` in the wrong
+ * directory. `--cd` is dropped when `cwd` is unknown.
+ */
+export function wslWrapCommandline(commandline: string[], distro: string, cwd?: string): string[] {
+	const wrapped = ["wsl.exe", "-d", distro];
+	if (cwd) wrapped.push("--cd", cwd);
+	wrapped.push("--", ...commandline);
+	return wrapped;
+}
+
+/**
+ * Adapt pane options for the host. Native Windows is identity. Under WSL,
+ * `WT_SESSION` is inherited but `cwd`/`commandline` are POSIX while wt.exe is a
+ * Windows program, so translate the `-d` start directory to a Windows path and
+ * run the child through `wsl.exe`. `host` is injectable for tests; in production
+ * the distro comes from `WSL_DISTRO_NAME` and translation from `wslpath`.
+ */
+export function adaptPaneOptionsForHost(
+	opts: WtPaneOptions,
+	host?: { wslDistro?: string; toWindowsPath?: (posixPath: string) => string | undefined },
+): WtPaneOptions {
+	let distro: string | undefined;
+	if (host) distro = host.wslDistro;
+	else if (process.platform === "linux") distro = Bun.env.WSL_DISTRO_NAME;
+	if (!distro) return opts;
+	const toWindowsPath = host?.toWindowsPath ?? wslpathToWindows;
+	return {
+		...opts,
+		cwd: opts.cwd ? toWindowsPath(opts.cwd) : undefined,
+		commandline: wslWrapCommandline(opts.commandline, distro, opts.cwd),
+	};
+}
+
 /** Executable used to launch the spawned session. Installed users have `omp` on PATH. */
 function ompBin(): string {
 	return Bun.env.OMP_BIN || "omp";
@@ -93,7 +141,11 @@ export default function windowsTerminalExtension(pi: ExtensionAPI) {
 			throw new Error("Not running inside Windows Terminal (WT_SESSION unset); cannot control panes.");
 		}
 		const launcher = resolveWtLauncher();
-		const result = await pi.exec(launcher.command, [...launcher.prefixArgs, ...buildWtArgs(opts)], {
+		// Native Windows: identity. WSL: `-d` becomes a Windows path and the child
+		// is wrapped in `wsl.exe`. The exec cwd stays the original (Linux under WSL)
+		// path — the spawn chdirs in Linux before interop launches cmd.exe.
+		const wtOpts = adaptPaneOptionsForHost(opts);
+		const result = await pi.exec(launcher.command, [...launcher.prefixArgs, ...buildWtArgs(wtOpts)], {
 			cwd: opts.cwd,
 		});
 		if (result.code !== 0) {
