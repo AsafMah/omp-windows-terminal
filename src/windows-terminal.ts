@@ -258,14 +258,19 @@ function agentDir(): string {
 /**
  * Discover recent oh-my-pi terminals from the core breadcrumb registry
  * (`<agent>/terminal-sessions/*`). Each breadcrumb is two lines — cwd, then
- * session file — written by oh-my-pi core for EVERY terminal, so this sees
- * sessions regardless of whether this extension started them (the answer to
- * "how do we deal with sessions not launched by the plugin"). Newest first; the
- * current terminal is flagged so callers can exclude it.
+ * session file — written by oh-my-pi core (NOT this extension), so discovery is
+ * agnostic to whether the plugin started the session. Newest first; the current
+ * terminal is flagged so callers can exclude it.
  *
- * A breadcrumb is a "last seen" marker, not a liveness signal — there is no
- * reliable way to tell a still-open terminal from a closed one beyond mtime, so
- * resuming one that is live elsewhere risks two writers on a session file.
+ * Coverage: core writes a breadcrumb only for a PERSISTED session (not
+ * `--no-session`) in an IDENTIFIABLE terminal — on Windows that means Windows
+ * Terminal (`WT_SESSION` set) or a multiplexer (tmux/zellij/kitty/wezterm); a
+ * plain cmd/PowerShell/conhost console sets no `WT_SESSION` and gets no
+ * breadcrumb. `/tan` named subagent forks are suppressed, and only the LATEST
+ * session per terminal is kept (older ones are overwritten — their `.jsonl` still
+ * lives under `<agent>/sessions/`). A breadcrumb is a "last seen" marker, not a
+ * liveness signal — resuming one that is live elsewhere risks two writers on a
+ * session file.
  */
 export async function discoverTerminalSessions(): Promise<TerminalSession[]> {
 	const dir = path.join(agentDir(), "terminal-sessions");
@@ -466,7 +471,10 @@ export default function windowsTerminalExtension(pi: ExtensionAPI) {
 			"List recent oh-my-pi terminal sessions from the core breadcrumb registry " +
 			"(~/.omp/agent/terminal-sessions), newest first — INCLUDING sessions this extension did not start. " +
 			"Each entry has the recorded working directory and session file. Use to pick sessions to resume or " +
-			"arrange. Recency is a 'last seen' proxy, not proof a session is still open.",
+			"arrange. Coverage is partial: only PERSISTED sessions run in an identifiable terminal (Windows " +
+			"Terminal with WT_SESSION set, or a tmux/zellij/kitty/wezterm multiplexer) leave a breadcrumb — a " +
+			"plain cmd/PowerShell console does not — and only the latest session per terminal is kept. Recency " +
+			"is a 'last seen' proxy, not proof a session is still open.",
 		approval: "read",
 		parameters: z.object({
 			limit: z.number().int().min(1).max(100).default(20).describe("Max sessions to list"),

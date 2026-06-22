@@ -44,10 +44,16 @@ runtime, use the sibling **`windows-terminal-control`** skill instead.
 
 ## Session discovery (plugin-agnostic)
 
-oh-my-pi **core** writes a breadcrumb per terminal at
+oh-my-pi **core** (NOT this extension) writes a breadcrumb per terminal at
 `<agentDir>/terminal-sessions/<id>` — two lines: cwd, then session `.jsonl` path —
-for *every* terminal, so `discoverTerminalSessions` sees sessions regardless of how
-they launched. The current Windows Terminal's file is `wt-$WT_SESSION`. `agentDir`
+so `discoverTerminalSessions` is agnostic to how a session launched. But core
+writes one ONLY for a **persisted** session in an **identifiable terminal**: on
+Windows that's Windows Terminal (`WT_SESSION` set) or a multiplexer
+(tmux/zellij/kitty/wezterm) — a plain cmd/PowerShell/conhost console sets no
+`WT_SESSION` and gets no breadcrumb. `/tan` named forks are suppressed, and only
+the LATEST session per terminal is kept (older `.jsonl`s survive under
+`<agent>/sessions/`).
+The current Windows Terminal's file is `wt-$WT_SESSION`. `agentDir`
 = `PI_CODING_AGENT_DIR` if set, else `<home>/<PI_CONFIG_DIR|".omp">/agent` (+
 `profiles/<OMP_PROFILE>` when a profile is active). A breadcrumb is "last seen",
 NOT a liveness signal — resuming a session that is live elsewhere means two writers

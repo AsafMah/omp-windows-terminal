@@ -47,11 +47,18 @@ recorded working directory:
 
 - Pass explicit `sessions` (ids/prefixes/paths, in order), or omit them to
   auto-pick the most recent terminals.
-- The sessions need **not** have been started by this extension. They're
-  discovered from oh-my-pi **core's** breadcrumb registry
+- The sessions need **not** have been started by this extension — discovery is
+  agnostic to that. They come from oh-my-pi **core's** breadcrumb registry
   (`~/.omp/agent/terminal-sessions/*` — two lines per terminal: cwd, then session
-  file), which core writes for *every* terminal. `list_omp_sessions` exposes the
-  same list (newest first, with each recorded cwd) so the agent can pick.
+  file). `list_omp_sessions` exposes the same list (newest first, each with its
+  recorded cwd) so the agent can pick.
+- **Coverage is partial.** Core records a breadcrumb only for a **persisted**
+  session in an **identifiable terminal** — on Windows that's Windows Terminal
+  (`WT_SESSION` set) or a multiplexer (tmux/zellij/kitty/wezterm); a plain
+  cmd/PowerShell/conhost console sets no `WT_SESSION` and leaves none. Only the
+  **latest** session per terminal is kept. So a session run in a bare console,
+  non-interactively, or older than its terminal's latest won't appear here (its
+  `.jsonl` still lives under `~/.omp/agent/sessions/`).
 
 This **opens a fresh arranged layout** of resumable sessions; it can't move or
 reflow panes that are already running (a process is bound to its pane). Recency
