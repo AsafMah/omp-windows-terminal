@@ -59,6 +59,13 @@ The current Windows Terminal's file is `wt-$WT_SESSION`. `agentDir`
 NOT a liveness signal — resuming a session that is live elsewhere means two writers
 on one session file.
 
+For the sessions breadcrumbs miss, `scanStoredSessions` walks
+`<agentDir>/sessions/<project>/*.jsonl` and recovers `{ id, cwd, title }` from each
+file's first-line header (`{ type:"session", … }`), reading only a bounded slice
+(not whole files). `list_omp_sessions source:"all"` surfaces these, and
+`arrange_sessions` uses it to recover the cwd of explicitly-named breadcrumb-less
+sessions. Cost: no "current" flag and a full directory walk, so it's opt-in.
+
 ## Shipping
 
 - If `git push` returns 403 because a *second* logged-in `gh` account is selected

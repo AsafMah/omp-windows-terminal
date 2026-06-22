@@ -304,6 +304,80 @@ export async function discoverTerminalSessions(): Promise<TerminalSession[]> {
 	return out;
 }
 
+/** A persisted oh-my-pi session recovered by reading its `.jsonl` header — covers sessions with no terminal breadcrumb. */
+export interface StoredSession {
+	/** Session id (header `id`, else the filename stem). */
+	id: string;
+	/** Recorded working directory (header `cwd`). */
+	cwd: string;
+	/** Session title from the header, or "" when none. */
+	title: string;
+	/** Session file mtime (ms). */
+	mtimeMs: number;
+	/** Absolute path to the session `.jsonl`. */
+	sessionFile: string;
+}
+
+/**
+ * Scan the full session store (`<agent>/sessions/<project>/*.jsonl`) and recover
+ * each session from its first-line header (`{ type:"session", id, cwd, title, … }`),
+ * newest first by file mtime. Reads only a bounded header slice, never whole
+ * (possibly huge) files. Unlike `discoverTerminalSessions`, this sees sessions
+ * with NO breadcrumb — plain-console, non-interactive, or older-than-latest — at
+ * the cost of no per-terminal/"current" context and a heavier directory walk.
+ */
+export async function scanStoredSessions(): Promise<StoredSession[]> {
+	const root = path.join(agentDir(), "sessions");
+	let projects: string[];
+	try {
+		projects = await fs.readdir(root);
+	} catch {
+		return [];
+	}
+	const out: StoredSession[] = [];
+	await Promise.all(
+		projects.map(async (project) => {
+			const dir = path.join(root, project);
+			let files: string[];
+			try {
+				files = await fs.readdir(dir);
+			} catch {
+				return;
+			}
+			await Promise.all(
+				files.map(async (file) => {
+					if (!file.endsWith(".jsonl")) return;
+					const sessionFile = path.join(dir, file);
+					let fh: Awaited<ReturnType<typeof fs.open>> | undefined;
+					try {
+						fh = await fs.open(sessionFile, "r");
+						const stat = await fh.stat();
+						if (!stat.isFile()) return;
+						const buf = Buffer.alloc(16_384);
+						const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
+						const firstLine = buf.subarray(0, bytesRead).toString("utf8").split("\n", 1)[0];
+						const header = JSON.parse(firstLine) as { id?: string; cwd?: string; title?: string };
+						if (!header.cwd) return;
+						out.push({
+							id: header.id ?? path.basename(file, ".jsonl"),
+							cwd: header.cwd,
+							title: header.title ?? "",
+							mtimeMs: stat.mtimeMs,
+							sessionFile,
+						});
+					} catch {
+						// Missing / oversized / non-JSON header — skip this file.
+					} finally {
+						await fh?.close();
+					}
+				}),
+			);
+		}),
+	);
+	out.sort((a, b) => b.mtimeMs - a.mtimeMs);
+	return out;
+}
+
 /** Human-readable "N{s,m,h,d} ago" from an mtime in ms. */
 function formatAge(mtimeMs: number): string {
 	const sec = Math.max(0, Math.round((Date.now() - mtimeMs) / 1000));
@@ -319,6 +393,13 @@ function formatAge(mtimeMs: number): string {
 function formatSessionLine(s: TerminalSession): string {
 	const marker = s.current ? "  (current)" : "";
 	return `• ${formatAge(s.mtimeMs).padEnd(8)} ${s.cwd || "(unknown cwd)"}${marker}\n    ${s.sessionFile}`;
+}
+
+/** Two-line rendering of a stored session; the store scan has no "current" flag, so the caller passes the current file. */
+function formatStoredLine(s: StoredSession, currentFile: string | undefined): string {
+	const marker = s.sessionFile === currentFile ? "  (current)" : "";
+	const title = s.title ? ` — ${s.title}` : "";
+	return `• ${formatAge(s.mtimeMs).padEnd(8)} ${s.cwd || "(unknown cwd)"}${title}${marker}\n    ${s.sessionFile}`;
 }
 
 /** A short pane label, preferring the project (cwd) basename over the opaque session filename. */
@@ -468,23 +549,39 @@ export default function windowsTerminalExtension(pi: ExtensionAPI) {
 		name: "list_omp_sessions",
 		label: "List OMP Sessions",
 		description:
-			"List recent oh-my-pi terminal sessions from the core breadcrumb registry " +
-			"(~/.omp/agent/terminal-sessions), newest first — INCLUDING sessions this extension did not start. " +
-			"Each entry has the recorded working directory and session file. Use to pick sessions to resume or " +
-			"arrange. Coverage is partial: only PERSISTED sessions run in an identifiable terminal (Windows " +
-			"Terminal with WT_SESSION set, or a tmux/zellij/kitty/wezterm multiplexer) leave a breadcrumb — a " +
-			"plain cmd/PowerShell console does not — and only the latest session per terminal is kept. Recency " +
-			"is a 'last seen' proxy, not proof a session is still open.",
+			"List recent oh-my-pi sessions to resume or arrange, newest first, each with its recorded working " +
+			'directory and session file. `source: "breadcrumbs"` (default) lists recent terminals from the core ' +
+			"breadcrumb registry (~/.omp/agent/terminal-sessions) — fast, INCLUDING sessions this extension did " +
+			"not start, but only PERSISTED sessions in an identifiable terminal (Windows Terminal with WT_SESSION, " +
+			"or a tmux/zellij/kitty/wezterm multiplexer; a plain cmd/PowerShell console leaves none) and only the " +
+			'latest session per terminal. `source: "all"` instead scans every persisted session in the store, ' +
+			"covering breadcrumb-less ones (plain console, non-interactive, older). Recency is a 'last seen' " +
+			"proxy, not proof a session is still open.",
 		approval: "read",
 		parameters: z.object({
+			source: z
+				.enum(["breadcrumbs", "all"])
+				.default("breadcrumbs")
+				.describe(
+					"breadcrumbs = recent terminals only (default, fast); all = every persisted session from the store, including ones with no breadcrumb",
+				),
 			limit: z.number().int().min(1).max(100).default(20).describe("Max sessions to list"),
-			includeCurrent: z
-				.boolean()
-				.default(false)
-				.describe("Include the current terminal's own session in the list"),
+			includeCurrent: z.boolean().default(false).describe("Include the current session in the list"),
 		}),
-		async execute(_toolCallId, params) {
-			const { limit, includeCurrent } = params;
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const { source, limit, includeCurrent } = params;
+			if (source === "all") {
+				const currentFile = ctx.sessionManager.getSessionFile() ?? undefined;
+				let stored = await scanStoredSessions();
+				if (!includeCurrent && currentFile) stored = stored.filter((s) => s.sessionFile !== currentFile);
+				stored = stored.slice(0, limit);
+				if (stored.length === 0) {
+					return { content: [{ type: "text", text: "No oh-my-pi sessions found in the store." }] };
+				}
+				return {
+					content: [{ type: "text", text: stored.map((s) => formatStoredLine(s, currentFile)).join("\n") }],
+				};
+			}
 			let sessions = await discoverTerminalSessions();
 			if (!includeCurrent) sessions = sessions.filter((s) => !s.current);
 			sessions = sessions.slice(0, limit);
@@ -502,7 +599,9 @@ export default function windowsTerminalExtension(pi: ExtensionAPI) {
 			"Open several oh-my-pi sessions arranged together in one Windows Terminal window — evenly sized " +
 			"columns (side by side) or rows (stacked), each resumed in its recorded working directory. " +
 			"Pass `sessions` (ids/prefixes/paths, in order) to choose them, or omit it to auto-pick the most " +
-			"recent terminals. Discovers sessions started outside this extension via the breadcrumb registry. " +
+			"recent terminals. Discovers sessions started outside this extension via the breadcrumb registry; " +
+			"explicit `sessions` are also resolved (with their recorded directory) from the full session store, " +
+			"so even breadcrumb-less sessions arrange in the right place. " +
 			"Opens a NEW arranged layout of resumable sessions; it cannot move or reflow already-running panes. " +
 			"Resuming a session that is live in another terminal risks two concurrent writers.",
 		approval: "exec",
@@ -538,13 +637,21 @@ export default function windowsTerminalExtension(pi: ExtensionAPI) {
 
 			let chosen: LayoutPane[];
 			if (refs && refs.length > 0) {
+				// Recover cwd for refs absent from the breadcrumb pool (e.g. ran in a plain console).
+				const stored = await scanStoredSessions();
 				chosen = refs.map((ref) => {
-					const match =
+					const bc =
 						pool.find((s) => s.sessionFile === ref) ??
 						pool.find((s) => path.basename(s.sessionFile).startsWith(ref)) ??
 						pool.find((s) => s.sessionFile.includes(ref));
-					const cwd = match?.cwd || undefined;
-					const sessionRef = match?.sessionFile ?? ref;
+					const st = bc
+						? undefined
+						: (stored.find((s) => s.sessionFile === ref) ??
+							stored.find((s) => s.id.startsWith(ref)) ??
+							stored.find((s) => path.basename(s.sessionFile).startsWith(ref)) ??
+							stored.find((s) => s.sessionFile.includes(ref)));
+					const cwd = bc?.cwd || st?.cwd || undefined;
+					const sessionRef = bc?.sessionFile ?? st?.sessionFile ?? ref;
 					return {
 						cwd,
 						title: paneTitle(cwd, sessionRef),

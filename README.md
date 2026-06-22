@@ -59,6 +59,12 @@ recorded working directory:
   **latest** session per terminal is kept. So a session run in a bare console,
   non-interactively, or older than its terminal's latest won't appear here (its
   `.jsonl` still lives under `~/.omp/agent/sessions/`).
+- **To see the rest**, `list_omp_sessions` takes `source: "all"`, which scans the
+  full session store (`~/.omp/agent/sessions/`) and recovers each session's cwd
+  from its `.jsonl` header — covering the breadcrumb-less sessions above (at the
+  cost of no per-terminal "current"/recency context and a heavier walk).
+  `arrange_sessions` likewise resolves explicit `sessions` against the store, so
+  even a breadcrumb-less session arranges in its recorded directory.
 
 This **opens a fresh arranged layout** of resumable sessions; it can't move or
 reflow panes that are already running (a process is bound to its pane). Recency

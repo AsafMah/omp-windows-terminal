@@ -9,6 +9,7 @@ import {
 	buildWtArgs,
 	discoverTerminalSessions,
 	resolveWtLauncher,
+	scanStoredSessions,
 	wslWrapCommandline,
 } from "../src/windows-terminal";
 
@@ -271,5 +272,52 @@ describe("discoverTerminalSessions", () => {
 	it("returns an empty list when the registry directory is absent", async () => {
 		Bun.env.PI_CODING_AGENT_DIR = path.join(tmp, "nope");
 		expect(await discoverTerminalSessions()).toEqual([]);
+	});
+});
+
+describe("scanStoredSessions", () => {
+	let tmp: string;
+	const savedAgentDir = Bun.env.PI_CODING_AGENT_DIR;
+
+	const writeSession = (project: string, id: string, cwd: string, title: string, mtime?: Date) => {
+		const dir = path.join(tmp, "sessions", project);
+		mkdirSync(dir, { recursive: true });
+		const file = path.join(dir, `${id}.jsonl`);
+		writeFileSync(file, `${JSON.stringify({ type: "session", id, cwd, title })}\n{"type":"message"}\n`);
+		if (mtime) utimesSync(file, mtime, mtime);
+	};
+
+	beforeEach(() => {
+		tmp = mkdtempSync(path.join(os.tmpdir(), "wt-store-"));
+		Bun.env.PI_CODING_AGENT_DIR = tmp;
+	});
+
+	afterEach(() => {
+		rmSync(tmp, { recursive: true, force: true });
+		if (savedAgentDir === undefined) delete Bun.env.PI_CODING_AGENT_DIR;
+		else Bun.env.PI_CODING_AGENT_DIR = savedAgentDir;
+	});
+
+	it("recovers cwd/title from headers, newest-first, across projects", async () => {
+		writeSession("projA", "id-old", "C:\\a", "Old one", new Date(Date.now() - 100_000));
+		writeSession("projB", "id-new", "C:\\b", "New one", new Date(Date.now() - 1_000));
+		const sessions = await scanStoredSessions();
+		expect(sessions.map((s) => s.id)).toEqual(["id-new", "id-old"]);
+		expect(sessions[0]).toMatchObject({ cwd: "C:\\b", title: "New one" });
+		expect(sessions[0].sessionFile.endsWith("id-new.jsonl")).toBe(true);
+	});
+
+	it("skips non-jsonl files and headers without a cwd", async () => {
+		writeSession("projA", "good", "C:\\a", "");
+		const dir = path.join(tmp, "sessions", "projA");
+		writeFileSync(path.join(dir, "note.txt"), "ignore me");
+		writeFileSync(path.join(dir, "nocwd.jsonl"), `${JSON.stringify({ type: "session", id: "nocwd" })}\n`);
+		const sessions = await scanStoredSessions();
+		expect(sessions.map((s) => s.id)).toEqual(["good"]);
+	});
+
+	it("returns an empty list when the store is absent", async () => {
+		Bun.env.PI_CODING_AGENT_DIR = path.join(tmp, "nope");
+		expect(await scanStoredSessions()).toEqual([]);
 	});
 });
