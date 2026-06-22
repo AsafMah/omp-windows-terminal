@@ -123,6 +123,11 @@ bun test        # pure builders, layout chaining, and session discovery
 bun run check   # tsc --noEmit
 ```
 
+The bundled **`windows-terminal-dev`** skill (`skills/windows-terminal-dev/`) is a
+contributor guide for this codebase — the type-only host API, the
+`wt.exe`-via-`cmd.exe` mechanic and how to verify `;` argv quoting, the layout
+sizing math, and breadcrumb discovery.
+
 ## License
 
 MIT
