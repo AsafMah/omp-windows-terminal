@@ -12,9 +12,11 @@ layouts — in particular, to open several omp sessions arranged together.
 
 - The user wants to **arrange / split / tile / organize** their terminal, or open
   multiple omp sessions **side by side** ("arrange all my omps", "put these in a grid").
-- For opening **one** session in a single pane/tab/window, prefer the
-  **`spawn_session_pane` tool** — it's gotcha-free. Use this skill for **multi-pane
-  layouts** the tool can't express.
+- For opening **one** session in a pane/tab/window, prefer the **`spawn_session_pane`
+  tool**; for an even **columns/rows** layout of resumable sessions, prefer the
+  **`arrange_sessions` tool** — both are gotcha-free. Use this skill only for
+  **bespoke layouts those tools can't express** (true grids, focus moves, custom
+  per-pane sizes) or when you need raw `wt.exe` control.
 
 ## Running wt.exe — read this first
 
@@ -47,7 +49,9 @@ executable first, e.g. `omp --resume C:\path\to\session.jsonl`.
 ## Finding omp sessions to lay out
 
 There is **no live-pane enumeration** — `wt` exposes no API to list panes, and the
-live-session registry is future work. Use these best-effort sources:
+live-session registry is future work. Prefer the **`list_omp_sessions` tool**
+(recent terminals, newest first, each with its recorded cwd). Its underlying
+sources, if you need them directly:
 
 - **Recent omp terminals** — `~/.omp/agent/terminal-sessions/`: one file per
   terminal, two lines: `<cwd>` then `<sessionFile>`. These are the most recent
